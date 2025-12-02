@@ -28,7 +28,7 @@ def chat_api(request):
             if 'constraints' not in request.session:
                 request.session['constraints'] = []
             if 'last_bot_response' not in request.session:
-                request.session['last_bot_response'] = "" # <--- MEMORY FIX
+                request.session['last_bot_response'] = "" 
             
             current_ingredients = request.session['ingredients']
             current_constraints = request.session['constraints']
@@ -46,7 +46,7 @@ def chat_api(request):
             CONTEXT (What you said last time): "{last_bot_msg}"
             User's New Input: "{user_message}"
             
-            YOUR GOAL: meaningful conversation. Stop looping.
+            YOUR GOAL: meaningful conversation. Manage the pantry accurately.
 
             STRICT LOGIC STEPS:
 
@@ -56,10 +56,16 @@ def chat_api(request):
                  - **STOP SUGGESTING.**
                  - **GO TO STEP 5 (RECIPE).**
 
-            2. **INTENT DETECTION**:
-               - **Clearing:** "reset", "clear", "tasty", "thanks" -> Set action="clear_data".
-               - **Gathering:** If user lists new items ("I have oil") -> Add to pantry.
-               - **Suggesting:** If user asks "what can I cook" -> Go to Step 3.
+            2. **INTENT DETECTION (CRITICAL)**:
+               - **Clear & Replace:** If user says "I don't want those, I have X", "Actually I only have X", "Forget that, use X":
+                 - Set action="clear_data".
+                 - Extract "X" into 'new_ingredients_found'.
+               - **Simple Clear:** "reset", "clear", "start over", "nothing else from pantry":
+                 - Set action="clear_data".
+               - **Gathering:** If user adds items ("I also have oil"):
+                 - Add to 'new_ingredients_found'.
+               - **Suggesting:** If user asks "what can I cook":
+                 - Go to Step 3.
             
             3. **FLAVOR INTERVENTION (The Missing Link)**:
                - Look at the pantry. Is it possible to make BOTH Sweet AND Savory dishes? 
@@ -70,7 +76,7 @@ def chat_api(request):
                - **IF NO** (Ingredients are clearly only savory, like Onion + Garlic):
                  - Proceed to Step 4.
 
-            4. **SUGGESTION PHASE** (Only if user hasn't selected a dish yet):
+             4. **SUGGESTION PHASE** (Only if user hasn't selected a dish yet):
                - Suggest 3 distinct options numbered 1, 2, 3.
                - Format: "Here are 3 ideas:<br><br>1. [Dish A]<br>[Short Description]<br><br>2. [Dish B]<br>[Short Description]<br><br>3. [Dish C]<br><br>[Short Description]<br>Which one sounds good?"
 
@@ -81,6 +87,7 @@ def chat_api(request):
                  - Number the steps clearly.
 
             RECIPE TEMPLATE:
+
             "🍽️ <b>[Dish Name]</b><br><br><b>Ingredients:</b><br>- [Item 1]<br>- [Item 2]<br><br><b>Instructions:</b><br>1. [Step 1]<br><br>2. [Step 2]<br><br>3. [Step 3]"
 
             Output strictly valid JSON:
@@ -102,40 +109,52 @@ def chat_api(request):
             if start != -1 and end != -1:
                 parsed_response = json.loads(text[start:end+1])
             else:
-                parsed_response = {"action": "chat", "bot_response": "Could you say that again?"}
+                parsed_response = {"action": "chat", "bot_response": "I'm having trouble thinking. Could you repeat that?"}
 
-            # --- PYTHON LOGIC ---
+            # --- ROBUST PYTHON LOGIC (Sequential Updates) ---
             action = parsed_response.get('action', 'chat')
             bot_reply = parsed_response.get('bot_response', '')
 
-            # SAVE CONTEXT FOR NEXT TURN
-            request.session['last_bot_response'] = bot_reply 
-
+            # 1. HANDLE CLEARING FIRST
+            # If the bot detects a "Replacement" intent, it sets action='clear_data'
+            # We wipe the slate clean immediately.
             if action == 'clear_data':
-                request.session.flush() # Clears everything
-            else:
-                # Update Ingredients
-                raw_items = parsed_response.get('new_ingredients_found', [])
+                request.session['ingredients'] = []
+                request.session['constraints'] = []
+                request.session['last_bot_response'] = "" # Clear history to prevent hallucinations
+                request.session.modified = True
+            
+            # 2. HANDLE REMOVALS
+            # Even if we didn't clear everything, we might need to remove specific items (e.g. "No salt")
+            items_to_remove = parsed_response.get('items_to_remove', [])
+            if items_to_remove:
+                current = request.session.get('ingredients', [])
+                cleaned = [i for i in current if i.lower() not in [x.lower() for x in items_to_remove]]
+                request.session['ingredients'] = cleaned
+                request.session.modified = True
+
+            # 3. HANDLE ADDITIONS (This runs AFTER clearing)
+            # This allows "Replace" to work: Clear -> Then Add New Items
+            raw_items = parsed_response.get('new_ingredients_found', [])
+            if raw_items:
+                current = request.session.get('ingredients', [])
+                # Title case formatting
                 new_items = [i.strip().title() for i in raw_items]
-                if new_items:
-                    updated_list = sorted(list(set(current_ingredients + new_items)))
-                    request.session['ingredients'] = updated_list
-                    request.session.modified = True 
-                
-                # Update Constraints
-                new_constraints = parsed_response.get('new_constraints_found', [])
-                if new_constraints:
-                    updated_constraints = list(set(current_constraints + new_constraints))
-                    request.session['constraints'] = updated_constraints
-                    request.session.modified = True
-                
-                # Remove Items
-                items_to_remove = parsed_response.get('items_to_remove', [])
-                if items_to_remove:
-                    current = request.session['ingredients']
-                    cleaned = [i for i in current if i.lower() not in [x.lower() for x in items_to_remove]]
-                    request.session['ingredients'] = cleaned
-                    request.session.modified = True
+                # Combine and sort unique items
+                updated_list = sorted(list(set(current + new_items)))
+                request.session['ingredients'] = updated_list
+                request.session.modified = True 
+            
+            # 4. HANDLE CONSTRAINTS
+            new_constraints = parsed_response.get('new_constraints_found', [])
+            if new_constraints:
+                current_cons = request.session.get('constraints', [])
+                updated_constraints = list(set(current_cons + new_constraints))
+                request.session['constraints'] = updated_constraints
+                request.session.modified = True
+
+            # Save Bot Response for Context
+            request.session['last_bot_response'] = bot_reply 
 
             return JsonResponse({
                 'response': bot_reply,
