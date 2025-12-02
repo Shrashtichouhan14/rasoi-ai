@@ -15,7 +15,7 @@ import os
 from dotenv import load_dotenv  # Add this
 
 DEBUG = False  
-ALLOWED_HOSTS = ['*']
+ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '*').split(',')
 CSRF_TRUSTED_ORIGINS = ['https://rasoi-ai-production.up.railway.app']
 # Load environment variables
 load_dotenv()  # Add this
