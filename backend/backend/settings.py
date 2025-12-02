@@ -13,10 +13,18 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 from pathlib import Path
 import os
 from dotenv import load_dotenv  # Add this
+  
+# SECURITY WARNING: keep the secret key used in production secret!
+SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-change-me-for-dev')
 
-DEBUG = False  
-ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '*').split(',')
+# SECURITY WARNING: don't run with debug turned on in production!
+DEBUG = True
+
+# --- THE FIX: HARDCODED DOMAIN ---
+ALLOWED_HOSTS = ['rasoi-ai-production.up.railway.app', 'localhost', '127.0.0.1']
+
 CSRF_TRUSTED_ORIGINS = ['https://rasoi-ai-production.up.railway.app']
+# ---------------------------------
 # Load environment variables
 load_dotenv()  # Add this
 
